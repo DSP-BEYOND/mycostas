@@ -1,0 +1,21 @@
+module mycostas(
+    clock,
+    resest,
+    signal_in,
+    signal_out
+);
+input clock;
+input resest;
+input  signed [13:0] signal_in;
+output signed [13:0] signal_out;
+wire signed [13:0] sin_o;
+cordicziji U1
+(
+    .clock(clock),
+    .resest(resest),
+    .freq_ctl_word({9'd5,7'd0}),
+    .sin_o(sin_o)
+);
+
+
+endmodule

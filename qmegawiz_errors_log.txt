@@ -1,0 +1,16 @@
+
+
+D:/TD-CDMA/PLL/mycostas/mypll.v
+
+Nov 21 02PM:21:52>: Megafunction PLL Intel FPGA IP v18.1 is not listed in any 
+wizard.lst file in the specified library path(s).Wizard launch aborted
+
+D:/TD-CDMA/PLL/mycostas/mypll.v
+
+Nov 21 02PM:21:58>: Megafunction PLL Intel FPGA IP v18.1 is not listed in any 
+wizard.lst file in the specified library path(s).Wizard launch aborted
+
+D:/TD-CDMA/PLL/mycostas/mypll.v
+
+Nov 21 03PM:11:38>: Megafunction PLL Intel FPGA IP v18.1 is not listed in any 
+wizard.lst file in the specified library path(s).Wizard launch aborted

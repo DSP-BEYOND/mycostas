@@ -1,0 +1,491 @@
+module cordicziji(
+clock,//时钟信号
+resest,//复位信号
+freq_ctl_word,//目标角度值
+sin_o,//输出sin值
+DA_clock,
+//PD
+);
+input clock;
+input resest;
+input [15:0] freq_ctl_word;//输入九位宽角度值
+output signed [13:0] sin_o;//输出信号为18位位宽
+output DA_clock;
+//output PD;
+//reg DA_clock;
+reg signed [17:0] sin;
+reg signed [13:0] sin_o;
+reg [15:0] freq_ct2_word;
+reg signed [17:0] x[16:0];//迭代16次，18位宽
+reg signed [17:0] y[16:0];
+reg signed [25:0] z[16:0];//迭代16次，角度为26位宽
+reg [15:0] phase;
+reg [15:0] phase_s;//转化为第一象限后的角度
+reg [1:0] flag;//所输入角度的象限值
+reg [33:0] flag_s;//用来储存各个脉冲下角度的象限值，用来做三角函数转换
+parameter COS_LM=16'h9b75;//迭代16次后cos的值的相乘，16次后已经很接近这个值
+
+`define ROT0  32'd2949120       //45度*2^16
+`define ROT1  32'd1740992       //26.5651度*2^16
+`define ROT2  32'd919872        //14.0362度*2^16
+`define ROT3  32'd466944        //7.1250度*2^16
+`define ROT4  32'd234368        //3.5763度*2^16
+`define ROT5  32'd117312        //1.7899度*2^16
+`define ROT6  32'd58688         //0.8952度*2^16
+`define ROT7  32'd29312         //0.4476度*2^16
+`define ROT8  32'd14656         //0.2238度*2^16
+`define ROT9  32'd7360          //0.1119度*2^16
+`define ROT10 32'd3648          //0.0560度*2^16
+`define ROT11 32'd1856          //0.0280度*2^16
+`define ROT12 32'd896           //0.0140度*2^16
+`define ROT13 32'd448           //0.0070度*2^16
+`define ROT14 32'd256           //0.0035度*2^16
+`define ROT15 32'd128           //0.0018度*2^16
+
+
+assign DA_clock=clock;
+assign PD=1'b0;
+reg [10:0] cnt;//用于频率累加字的产生
+reg clk2;//用于频率累加字的时钟
+always @(posedge clock or negedge resest) begin
+    if(resest==1'b0) begin
+	 cnt<=0;end
+	 else if(cnt<20'd1000) begin
+	 cnt<=cnt+1;end
+	 else begin
+	 cnt<=1'd0;end
+end
+
+always @(posedge clock or negedge resest) begin
+    if(resest==1'b0) begin
+	 clk2<=0;end
+	 else if(cnt==20'd1000) begin
+	 clk2<=~clk2;end
+	 else begin
+	 clk2<=clk2;end
+end
+
+
+//always @(posedge clk2 or negedge resest) begin
+//    if(resest==1'b0) begin
+//	 freq_ct2_word<=0;end
+//	 else if (freq_ct2_word<16'd1000) begin
+//	 freq_ct2_word<=freq_ct2_word+16'd1;end
+//	 else begin
+//	 freq_ct2_word<=0;end
+//	 
+//end
+
+//always @(posedge clock or negedge resest) begin
+//    if(resest==1'b0) begin
+//    phase <= 0;end
+//    else if(phase<{9'd360,7'd0}) begin
+//    phase <= phase + 16'd100+freq_ct2_word;end//可产生1K到4M的正弦波频率
+//    else begin
+//    phase<=16'b0;end
+//end
+
+
+always @(posedge clock or negedge resest) begin
+    if(resest==1'b0) begin
+    phase <= 0;end
+    else if(phase<16'b65535) begin
+    phase <= phase + freq_ctl_word;end//可产生1K到4M的正弦波频率
+    else begin
+    phase<=16'b0;end
+end
+
+always@(posedge clock or negedge resest) begin
+ if(resest==1'b0) begin
+   phase_s<=0;
+   flag<=0;
+ end
+ else if(phase<=16'd16384) begin//根据角度值进行转换，将输入的角度值转换到第一象限，
+      phase_s<=phase;  //最终根据三角函数知识将其结果转换得出
+      flag<=0;
+      end
+      else if(phase<16'd32768) begin
+      phase_s<=phase-16'd16384;
+      flag<=1;
+      end
+      else if(phase<16'd49152) begin
+      phase_s<=phase-16'd32768;
+      flag<=2;
+      end
+      else if(phase<16'b65535) begin
+      phase_s<=phase-16'd49152;
+      flag<=3;
+      end
+      else begin
+      phase_s<=phase-16'b65535;
+      flag<=0;
+      end
+end
+
+always@(posedge clock or negedge resest) begin
+ if(resest==0) begin
+   x[0]<=0;
+   y[0]<=0;
+   z[0]<=0;
+ end
+ else begin
+   x[0]<={1'b0,COS_LM};//乘上缩放因子
+   y[0]<=0;
+   z[0]<={2'b00,phase_s,9'b0};//将输入角度扩大2^16后存入其中
+	//9+16
+ end
+end
+//以下为迭代计算代码，在上文中有所说明
+always@ (posedge clock or negedge resest) begin
+ if(resest==0) begin
+   x[1]<=0;
+   y[1]<=0;
+   z[1]<=0;
+ end
+ else begin
+   if(z[0][25]==0)begin
+     x[1]<= x[0]-(y[0]>>>0);
+     y[1]<= y[0]+(x[0]>>>0);
+     z[1]<= z[0]-`ROT0;
+   end
+   else begin
+     x[1] <= x[0] + (y[0]>>>0);
+     y[1] <= y[0] - (x[0]>>>0);
+     z[1] <= z[0] + `ROT0;
+   end
+ end
+end
+
+always@ (posedge clock or negedge resest) begin
+ if(resest==0) begin
+ x[2]<=0;
+ y[2]<=0;
+ z[2]<=0;
+ end
+ else begin
+  if(z[1][25]==0)begin
+  x[2]<= x[1]-(y[1]>>>1);
+  y[2]<= y[1]+(x[1]>>>1);
+  z[2]<= z[1]-`ROT1;
+  end
+  else begin
+  x[2] <= x[1] + (y[1]>>>1);
+  y[2] <= y[1] - (x[1]>>>1);
+  z[2] <= z[1] + `ROT1;
+  end
+ end
+end  
+
+always@ (posedge clock or negedge resest) begin
+ if(resest==0) begin
+ x[3]<=0;
+ y[3]<=0;
+ z[3]<=0;
+ end
+ else begin
+  if(z[2][25]==0)begin
+  x[3]<= x[2]-(y[2]>>>2);
+  y[3]<= y[2]+(x[2]>>>2);
+  z[3]<= z[2]-`ROT2;
+  end
+  else begin
+  x[3] <= x[2] + (y[2]>>>2);
+  y[3] <= y[2] - (x[2]>>>2);
+  z[3] <= z[2] + `ROT2;
+  end
+ end
+end 
+
+always@ (posedge clock or negedge resest) begin
+ if(resest==0) begin
+ x[4]<=0;
+ y[4]<=0;
+ z[4]<=0;
+ end
+ else begin
+  if(z[3][25]==0)begin
+  x[4]<= x[3]-(y[3]>>>3);
+  y[4]<= y[3]+(x[3]>>>3);
+  z[4]<= z[3]-`ROT3;
+  end
+  else begin
+  x[4] <= x[3] + (y[3]>>>3);
+  y[4] <= y[3] - (x[3]>>>3);
+  z[4] <= z[3] + `ROT3;
+  end
+ end
+end 
+
+always@ (posedge clock or negedge resest) begin
+ if(resest==0) begin
+ x[5]<=0;
+ y[5]<=0;
+ z[5]<=0;
+ end
+ else begin
+  if(z[4][25]==0)begin
+  x[5]<= x[4]-(y[4]>>>4);
+  y[5]<= y[4]+(x[4]>>>4);
+  z[5]<= z[4]-`ROT4;
+  end
+  else begin
+  x[5] <= x[4] + (y[4]>>>4);
+  y[5] <= y[4] - (x[4]>>>4);
+  z[5] <= z[4] + `ROT4;
+  end
+ end
+end 
+
+always@ (posedge clock or negedge resest) begin
+ if(resest==0) begin
+ x[6]<=0;
+ y[6]<=0;
+ z[6]<=0;
+ end
+ else begin
+  if(z[5][25]==0)begin
+  x[6]<= x[5]-(y[5]>>>5);
+  y[6]<= y[5]+(x[5]>>>5);
+  z[6]<= z[5]-`ROT5;
+  end
+  else begin
+  x[6] <= x[5] + (y[5]>>>5);
+  y[6] <= y[5] - (x[5]>>>5);
+  z[6] <= z[5] + `ROT5;
+  end
+ end
+end 
+
+always@ (posedge clock or negedge resest) begin
+ if(resest==0) begin
+ x[7]<=0;
+ y[7]<=0;
+ z[7]<=0;
+ end
+ else begin
+  if(z[5][25]==0)begin
+  x[7]<= x[6]-(y[6]>>>6);
+  y[7]<= y[6]+(x[6]>>>6);
+  z[7]<= z[6]-`ROT6;
+  end
+  else begin
+  x[7] <= x[6] + (y[6]>>>6);
+  y[7] <= y[6] - (x[6]>>>6);
+  z[7] <= z[6] + `ROT6;
+  end
+ end
+end 
+
+always@ (posedge clock or negedge resest) begin
+ if(resest==0) begin
+ x[8]<=0;
+ y[8]<=0;
+ z[8]<=0;
+ end
+ else begin
+  if(z[7][25]==0)begin
+  x[8]<= x[7]-(y[7]>>>7);
+  y[8]<= y[7]+(x[7]>>>7);
+  z[8]<= z[7]-`ROT7;
+  end
+  else begin
+  x[8] <= x[7] + (y[7]>>>7);
+  y[8] <= y[7] - (x[7]>>>7);
+  z[8] <= z[7] + `ROT7;
+  end
+ end
+end 
+
+always@ (posedge clock or negedge resest) begin
+ if(resest==0) begin
+ x[9]<=0;
+ y[9]<=0;
+ z[9]<=0;
+ end
+ else begin
+  if(z[8][25]==0)begin
+  x[9]<= x[8]-(y[8]>>>8);
+  y[9]<= y[8]+(x[8]>>>8);
+  z[9]<= z[8]-`ROT8;
+  end
+  else begin
+  x[9] <= x[8] + (y[8]>>>8);
+  y[9] <= y[8] - (x[8]>>>8);
+  z[9] <= z[8] + `ROT8;
+  end
+ end
+end
+
+always@ (posedge clock or negedge resest) begin
+ if(resest==0) begin
+ x[10]<=0;
+ y[10]<=0;
+ z[10]<=0;
+ end
+ else begin
+  if(z[9][25]==0)begin
+  x[10]<= x[9]-(y[9]>>>9);
+  y[10]<= y[9]+(x[9]>>>9);
+  z[10]<= z[9]-`ROT9;
+  end
+  else begin
+  x[10] <= x[9] + (y[9]>>>9);
+  y[10] <= y[9] - (x[9]>>>9);
+  z[10] <= z[9] + `ROT9;
+  end
+ end
+end
+
+always@ (posedge clock or negedge resest) begin
+ if(resest==0) begin
+ x[11]<=0;
+ y[11]<=0;
+ z[11]<=0;
+ end
+ else begin
+  if(z[10][25]==0)begin
+  x[11]<= x[10]-(y[10]>>>10);
+  y[11]<= y[10]+(x[10]>>>10);
+  z[11]<= z[10]-`ROT10;
+  end
+  else begin
+  x[11] <= x[10] + (y[10]>>>10);
+  y[11] <= y[10] - (x[10]>>>10);
+  z[11] <= z[10] + `ROT10;
+  end
+ end
+end
+
+always@ (posedge clock or negedge resest) begin
+ if(resest==0) begin
+ x[12]<=0;
+ y[12]<=0;
+ z[12]<=0;
+ end
+ else begin
+  if(z[11][25]==0)begin
+  x[12]<= x[11]-(y[11]>>>11);
+  y[12]<= y[11]+(x[11]>>>11);
+  z[12]<= z[11]-`ROT11;
+  end
+  else begin
+  x[12] <= x[11] + (y[11]>>>11);
+  y[12] <= y[11] - (x[11]>>>11);
+  z[12] <= z[11] + `ROT11;
+  end
+ end
+end
+
+always@ (posedge clock or negedge resest) begin
+ if(resest==0) begin
+ x[13]<=0;
+ y[13]<=0;
+ z[13]<=0;
+ end
+ else begin
+  if(z[12][25]==0)begin
+  x[13]<= x[12]-(y[12]>>>12);
+  y[13]<= y[12]+(x[12]>>>12);
+  z[13]<= z[12]-`ROT12;
+  end
+  else begin
+  x[13] <= x[12] + (y[12]>>>12);
+  y[13] <= y[12] - (x[12]>>>12);
+  z[13] <= z[12] + `ROT12;
+  end
+ end
+end
+
+always@ (posedge clock or negedge resest) begin
+ if(resest==0) begin
+ x[14]<=0;
+ y[14]<=0;
+ z[14]<=0;
+ end
+ else begin
+  if(z[13][25]==0)begin
+  x[14]<= x[13]-(y[13]>>>13);
+  y[14]<= y[13]+(x[13]>>>13);
+  z[14]<= z[13]-`ROT13;
+  end
+  else begin
+  x[14] <= x[13] + (y[13]>>>13);
+  y[14] <= y[13] - (x[13]>>>13);
+  z[14] <= z[13] + `ROT13;
+  end
+ end
+end
+
+always@ (posedge clock or negedge resest) begin
+ if(resest==0) begin
+ x[15]<=0;
+ y[15]<=0;
+ z[15]<=0;
+ end
+ else begin
+  if(z[14][25]==0)begin
+  x[15]<= x[14]-(y[14]>>>14);
+  y[15]<= y[14]+(x[14]>>>14);
+  z[15]<= z[14]-`ROT14;
+  end
+  else begin
+  x[15] <= x[14] + (y[14]>>>14);
+  y[15] <= y[14] - (x[14]>>>14);
+  z[15] <= z[14] + `ROT14;
+  end
+ end
+end
+
+always@ (posedge clock or negedge resest) begin
+ if(resest==0) begin
+ x[16]<=0;
+ y[16]<=0;
+ z[16]<=0;
+ end
+ else begin
+  if(z[15][25]==0)begin
+  x[16]<= x[15]-(y[15]>>>15);
+  y[16]<= y[15]+(x[15]>>>15);
+  z[16]<= z[15]-`ROT15;
+  end
+  else begin
+  x[16] <= x[15] + (y[15]>>>15);
+  y[16] <= y[15] - (x[15]>>>15);
+  z[16] <= z[15] + `ROT15;
+  end
+ end
+end
+
+always@(posedge clock or negedge resest) begin//用来记录象限值
+ if(resest==0) begin
+ flag_s<=0;
+ end
+ else begin                  //确保在16个脉冲后，
+ flag_s<={flag_s[31:0],flag};//输出的三角函数值与其象限能对应起来
+ end                        //象限值为2位位宽，延迟输出16个脉冲，
+end                           //因此在32位位宽中不断左移计算
+always@(posedge clock or negedge resest) begin//根据象限值还原sin值
+ if(resest==0) begin
+ sin<=0;
+ end
+ else if(flag_s[33:32]==0) begin
+ sin<=y[16];
+ end
+ else if(flag_s[33:32]==1) begin
+ sin<=x[16];
+ end
+ else if(flag_s[33:32]==2) begin
+ sin<=~(y[16])+1'b1;//相反数，取补码
+ end
+ else if(flag_s[33:32]==3) begin
+ sin<=~(x[16])+1'b1;
+ end
+end
+
+always@(posedge clock or negedge resest) begin//根据象限值还原sin值
+ if(resest==0) 
+ sin_o<=0;
+ else
+ sin_o<={sin[17],sin[16:4]};
+end
+endmodule
